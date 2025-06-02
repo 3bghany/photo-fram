@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Digital Photo Frame</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        
+        body {
+            margin: 0;
+            padding: 20px;
+            background: #111;
+            color: #fff;
+            font-family: 'Segoe UI', sans-serif;
+            text-align: center;
+        }
+        
+        h2 {
+            color: #ff0033;
+            font-size: 1.8rem;
+            margin-bottom: 10px;
+        }
+        
+        #frameSelector {
+            margin-bottom: 15px;
+        }
+        
+        #frameSelector button {
+            margin: 0 5px 10px 5px;
+            padding: 8px 14px;
+            background: #222;
+            color: #fff;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        
+        #frameSelector button.active,
+        #frameSelector button:hover {
+            background: #ff0033;
+        }
+        
+        #photoWrapper {
+            position: relative;
+            width: 90vw;
+            max-width: 600px;
+            margin: 0 auto;
+            aspect-ratio: 3 / 4;
+            background: black;
+            border-radius: 12px;
+            box-shadow: 0 0 25px #ff0033aa;
+            overflow: hidden;
+            user-select: none;
+        }
+        
+        #video,
+        #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 12px;
+            display: block;
+        }
+        
+        #canvas {
+            display: none;
+        }
+        
+        #overlayText {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            font-size: 22px;
+            color: white;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 5px 10px;
+            border-radius: 5px;
+            display: none;
+            cursor: move;
+            z-index: 2;
+            max-width: 90%;
+            user-select: none;
+            word-break: break-word;
+        }
+        
+        #countdown {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 60px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 20px;
+            border-radius: 20px;
+            z-index: 10;
+            display: none;
+        }
+        
+        .controls,
+        .text-controls {
+            margin-top: 20px;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 10px;
+        }
+        
+        .controls button,
+        .text-controls button {
+            background: #ff0033;
+            border: none;
+            padding: 12px 20px;
+            color: white;
+            border-radius: 8px;
+            font-weight: bold;
+            cursor: pointer;
+            flex: 1 1 150px;
+            max-width: 200px;
+        }
+        
+        #textInput {
+            width: 80%;
+            padding: 10px;
+            border-radius: 8px;
+            max-width: 400px;
+            font-size: 16px;
+        }
+        
+        #savedPhotosContainer {
+            margin-top: 15px;
+            color: #0f0;
+            word-break: break-word;
+            font-size: 1rem;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+    </style>
+</head>
+
+<body>
+    <h2>📸 Take or Upload a Photo</h2>
+    <div id="frameSelector"></div>
+    <div id="photoWrapper">
+        <video id="video" autoplay playsinline muted></video>
+        <canvas id="canvas" width="600" height="800"></canvas>
+        <div id="overlayText" contenteditable="true" spellcheck="false"></div>
+        <div id="countdown"></div>
+    </div>
+    <div class="controls">
+        <button onclick="startCountdown()">📷 Take Photo</button>
+        <button onclick="document.getElementById('upload').click()">📁 Upload</button>
+        <button onclick="downloadImage()">⬇️ Download</button>
+    </div>
+    <input type="file" id="upload" accept="image/*" style="display:none" />
+    <div class="text-controls">
+        <input type="text" id="textInput" placeholder="Enter text to convert to Japanese-style phonetics" />
+        <button onclick="translateAndOverlay()">🇯🇵 Convert</button>
+    </div>
+    <div id="savedPhotosContainer"></div>
+
+    <script>
+        const video = document.getElementById("video");
+        const canvas = document.getElementById("canvas");
+        const ctx = canvas.getContext("2d");
+        const overlayText = document.getElementById("overlayText");
+        const countdown = document.getElementById("countdown");
+        const upload = document.getElementById("upload");
+        const savedPhotosContainer = document.getElementById("savedPhotosContainer");
+        const frameSelector = document.getElementById("frameSelector");
+
+        let uploadedImage = null;
+
+        // Frame images list
+        const frameList = ["frame1.png", "frame2.png", "frame3.png"];
+        let currentFrame = null;
+        const frameImg = new Image();
+
+        // Initialize frame buttons
+        function updateActiveFrameButton(selectedBtn) {
+            const buttons = frameSelector.querySelectorAll("button");
+            buttons.forEach(btn => {
+                btn.classList.toggle("active", btn === selectedBtn);
+            });
+        }
+
+        frameList.forEach((frameFile, i) => {
+            const btn = document.createElement("button");
+            btn.textContent = `Frame ${i + 1}`;
+            btn.onclick = () => {
+                currentFrame = `frames/${frameFile}`;
+                frameImg.src = currentFrame;
+                updateActiveFrameButton(btn);
+            };
+            frameSelector.appendChild(btn);
+            if (i === 0) {
+                btn.classList.add("active");
+                currentFrame = `frames/${frameFile}`;
+                frameImg.src = currentFrame;
+            }
+        });
+
+        navigator.mediaDevices.getUserMedia({
+                video: {
+                    facingMode: "user"
+                }
+            })
+            .then(stream => {
+                video.srcObject = stream;
+            })
+            .catch(() => alert("Camera access denied"));
+
+        // Draw image/video and frame overlay on canvas
+        function drawFittedImage(img) {
+            const imgRatio = img.videoWidth / img.videoHeight || img.width / img.height;
+            const canvasRatio = canvas.width / canvas.height;
+            let drawWidth = canvas.width;
+            let drawHeight = canvas.height;
+
+            if (imgRatio > canvasRatio) {
+                drawHeight = canvas.height;
+                drawWidth = imgRatio * drawHeight;
+            } else {
+                drawWidth = canvas.width;
+                drawHeight = drawWidth / imgRatio;
+            }
+
+            const offsetX = (canvas.width - drawWidth) / 2;
+            const offsetY = (canvas.height - drawHeight) / 2;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight);
+
+            if (frameImg.complete && currentFrame) {
+                ctx.drawImage(frameImg, 0, 0, canvas.width, canvas.height);
+            }
+        }
+
+        function takePhoto() {
+            canvas.style.display = "block";
+            video.style.display = "none";
+            uploadedImage = null;
+            drawFittedImage(video);
+        }
+
+        function startCountdown() {
+            video.style.display = "block";
+            canvas.style.display = "none";
+            let count = 5;
+            countdown.style.display = "block";
+            countdown.textContent = count;
+            const interval = setInterval(() => {
+                count--;
+                if (count <= 0) {
+                    clearInterval(interval);
+                    countdown.style.display = "none";
+                    takePhoto();
+                } else {
+                    countdown.textContent = count;
+                }
+            }, 1000);
+        }
+
+        upload.addEventListener("change", (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                const img = new Image();
+                img.onload = function() {
+                    canvas.style.display = "block";
+                    video.style.display = "none";
+                    uploadedImage = img;
+                    drawFittedImage(img);
+                };
+                img.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+
+        function renderCanvasWithOverlay() {
+            if (uploadedImage) drawFittedImage(uploadedImage);
+            else drawFittedImage(video);
+
+            if (overlayText.style.display !== "none") {
+                const x = parseInt(overlayText.style.left || "20");
+                const y = parseInt(overlayText.style.top || "20") + 25;
+                const text = overlayText.textContent;
+                ctx.font = "22px Segoe UI";
+                ctx.fillStyle = "white";
+                ctx.textBaseline = "top";
+
+                const maxWidth = canvas.width - x - 20;
+                const lineHeight = 26;
+                const words = text.split(" ");
+                let line = "";
+                let yOffset = y;
+
+                for (let n = 0; n < words.length; n++) {
+                    const testLine = line + words[n] + " ";
+                    const metrics = ctx.measureText(testLine);
+                    if (metrics.width > maxWidth && n > 0) {
+                        ctx.fillText(line, x, yOffset);
+                        line = words[n] + " ";
+                        yOffset += lineHeight;
+                    } else {
+                        line = testLine;
+                    }
+                }
+                ctx.fillText(line, x, yOffset);
+            }
+        }
+
+        function downloadImage() {
+            renderCanvasWithOverlay();
+
+            canvas.toBlob(blob => {
+                const url = URL.createObjectURL(blob);
+
+                const link = document.createElement("a");
+                link.download = `Photos/framed-photo-${Date.now()}.png`;
+                link.href = url;
+                link.click();
+
+                savedPhotosContainer.innerHTML = `
+          ✅ Photo saved!:<br/>
+          <a href="${url}" target="_blank" style="color:#0f0;">Open saved photo</a>
+        `;
+            }, "image/png");
+        }
+
+        function translateAndOverlay() {
+            const input = document.getElementById("textInput").value.trim();
+            if (!input) return alert("Please enter text.");
+            const map = {
+                a: "ア",
+                A: "ア",
+                b: "バ",
+                B: "バ",
+                c: "ク",
+                C: "ク",
+                d: "ド",
+                D: "ド",
+                e: "エ",
+                E: "エ",
+                f: "フ",
+                F: "フ",
+                g: "グ",
+                G: "グ",
+                h: "ハ",
+                H: "ハ",
+                i: "イ",
+                I: "イ",
+                j: "ジ",
+                J: "ジ",
+                k: "カ",
+                K: "カ",
+                l: "ル",
+                L: "ル",
+                m: "ミ",
+                M: "ミ",
+                n: "ン",
+                N: "ン",
+                o: "オ",
+                O: "オ",
+                p: "パ",
+                P: "パ",
+                q: "ク",
+                Q: "ク",
+                r: "ラ",
+                R: "ラ",
+                s: "ス",
+                S: "ス",
+                t: "ト",
+                T: "ト",
+                u: "ウ",
+                U: "ウ",
+                v: "ヴ",
+                V: "ヴ",
+                w: "ワ",
+                W: "ワ",
+                x: "クス",
+                X: "クス",
+                y: "ヤ",
+                Y: "ヤ",
+                z: "ゼ",
+                Z: "ゼ",
+                '0': "ゼロ",
+                '1': "イチ",
+                '2': "ニ",
+                '3': "サン",
+                '4': "ヨン",
+                '5': "ゴ",
+                '6': "ロク",
+                '7': "ナナ",
+                '8': "ハチ",
+                '9': "キュウ",
+                ' ': "・"
+            };
+            const result = input
+                .split(/\s+/)
+                .map(word => [...word].map(ch => map[ch] || ch).join("")).join("・");
+            overlayText.textContent = result;
+            overlayText.style.display = "block";
+        }
+
+        // Make overlayText draggable
+        let isDragging = false,
+            offsetX, offsetY;
+        overlayText.addEventListener("mousedown", (e) => {
+            isDragging = true;
+            const rect = overlayText.getBoundingClientRect();
+            offsetX = e.clientX - rect.left;
+            offsetY = e.clientY - rect.top;
+            overlayText.style.cursor = "grabbing";
+            e.preventDefault();
+        });
+        document.addEventListener("mousemove", (e) => {
+            if (!isDragging) return;
+            const parentRect = document.getElementById("photoWrapper").getBoundingClientRect();
+            let left = e.clientX - offsetX - parentRect.left;
+            let top = e.clientY - offsetY - parentRect.top;
+            left = Math.max(0, Math.min(left, parentRect.width - overlayText.offsetWidth));
+            top = Math.max(0, Math.min(top, parentRect.height - overlayText.offsetHeight));
+            overlayText.style.left = `${left}px`;
+            overlayText.style.top = `${top}px`;
+        });
+        document.addEventListener("mouseup", () => {
+            isDragging = false;
+            overlayText.style.cursor = "move";
+        });
+    </script>
+</body>
+
+</html>
